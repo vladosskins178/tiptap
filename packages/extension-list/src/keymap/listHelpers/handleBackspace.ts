@@ -2,6 +2,7 @@ import type { Editor } from '@tiptap/core'
 import { isAtStartOfNode, isNodeActive } from '@tiptap/core'
 import { joinTextblockBackward } from '@tiptap/pm/commands'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import { Fragment } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
 
 import { hasListBefore } from './hasListBefore.js'
@@ -41,6 +42,44 @@ export const handleBackspace = (editor: Editor, name: string, parentListTypes: s
     }
 
     const $lastItemPos = editor.state.doc.resolve($listPos.start() + lastItem.pos + 1)
+    const lastItemNode = $lastItemPos.node()
+
+    // the paragraph can only be joined into the last item if the item's content
+    // allows another block at its end (not the case for e.g. `content: 'paragraph'`).
+    // Otherwise move the paragraph into a new list item after the last item.
+    if (
+      !lastItemNode.canReplace(
+        lastItemNode.childCount,
+        lastItemNode.childCount,
+        Fragment.from($anchor.parent),
+      )
+    ) {
+      const newItem = lastItemNode.type.createAndFill(null, $anchor.parent)
+
+      if (!newItem) {
+        return false
+      }
+
+      let paragraphOffset = 0
+
+      newItem.forEach((child, offset) => {
+        if (child === $anchor.parent) {
+          paragraphOffset = offset
+        }
+      })
+
+      return editor
+        .chain()
+        .command(({ tr }) => {
+          const target = $lastItemPos.after()
+
+          tr.delete($anchor.before(), $anchor.after()).insert(target, newItem)
+          tr.setSelection(TextSelection.create(tr.doc, target + 1 + paragraphOffset + 1))
+
+          return true
+        })
+        .run()
+    }
 
     return editor
       .chain()
